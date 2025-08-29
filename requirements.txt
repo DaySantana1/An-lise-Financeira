@@ -1,0 +1,9 @@
+streamlit
+pandas
+plotly
+networkx
+pyvis
+statsmodels
+scikit-learn
+Faker
+openpyxl

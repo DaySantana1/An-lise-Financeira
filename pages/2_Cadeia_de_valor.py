@@ -27,6 +27,12 @@ st.markdown("""
         border-radius: 5px;
         margin-bottom: 2rem;
     }
+            
+    /* Texto dos valores dos elementos */
+    section[data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"] div {
+        color: #000000 !important;
+    }
+
 </style>
 """, unsafe_allow_html=True)
 

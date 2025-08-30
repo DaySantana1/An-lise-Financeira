@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 from data_loader import load_transacoes
 from utils import features_cashflow, classificar_momento
+from consulta_ia import retorna_informacao
 
 st.set_page_config(page_title="Momento da Empresa", layout="wide")
 st.title("Análise Detalhada: Momento da Empresa")
@@ -24,6 +25,7 @@ if perfil.empty:
     st.error("Não foi possível carregar os dados para esta página.")
 else:
     id_selecionado = st.selectbox("Selecione a empresa:", sorted(perfil["id"].unique()))
+    informacoes_ia = retorna_informacao(id_selecionado)
     
     perfil_id = perfil[perfil["id"] == id_selecionado].iloc[0]
     st.metric("Momento Atual", perfil_id['momento'], f"Margem Média: {perfil_id['margem_med']:.1%}")
@@ -43,3 +45,6 @@ else:
         mix_receitas = receitas_id.groupby("ds_tran")["vl"].sum().reset_index()
         fig_pie_receitas = px.pie(mix_receitas, names="ds_tran", values="vl", hole=0.4, title="Distribuição de Receitas")
         st.plotly_chart(fig_pie_receitas, use_container_width=True)
+    st.markdown("---")
+    st.header("🤖 Análise IA")
+    st.info(informacoes_ia)

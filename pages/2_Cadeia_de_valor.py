@@ -5,6 +5,7 @@ from networkx.algorithms import community as nx_comm
 from pyvis.network import Network
 import os
 import random
+from consulta_ia import gerar_resumo_executivo
 
 st.set_page_config(page_title="Cadeia de Valor", layout="wide")
 
@@ -27,6 +28,12 @@ st.markdown("""
         border-radius: 5px;
         margin-bottom: 2rem;
     }
+            
+    /* Texto dos valores dos elementos */
+    section[data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"] div {
+        color: #000000 !important;
+    }
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -56,8 +63,11 @@ else:
     # --- Barra Lateral de Filtros ---
     st.sidebar.header("Configurações da Análise")
     peso_aresta = st.sidebar.selectbox("Analisar conexões por:", ["Valor Total Transacionado", "Número de Transações"])
+    print(peso_aresta)
     limite_conexoes = st.sidebar.slider("Analisar as N conexões mais fortes:", 50, 1000, 250, 50)
+    print(limite_conexoes)
     limiar_risco = st.sidebar.slider("Limiar de Risco de Dependência (%)", 10, 100, 50, 5) / 100.0
+    print(limiar_risco)
 
     # --- Processamento e Criação do Grafo ---
     if peso_aresta == "Valor Total Transacionado":
@@ -212,4 +222,16 @@ else:
                     os.remove(path)
     else:
         st.info("Nenhum dado para exibir com os filtros selecionados.")
+    
+    st.header("📊 Resumo Executivo com IA")
+    with st.container():
+        st.markdown('<div class="ai-summary">', unsafe_allow_html=True)
+
+        # calcula top conexões (já está pronto no seu código como top_edges)
+        top_conexoes = top_edges.to_dict(orient="records")
+
+        resumo_ai = gerar_resumo_executivo(G, communities, limiar_risco, limite_conexoes, top_conexoes)
+        st.write(resumo_ai)
+
+        st.markdown('</div>', unsafe_allow_html=True)
 

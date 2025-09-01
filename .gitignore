@@ -1,0 +1,16 @@
+# Arquivos de configuração sensíveis
+.env
+
+# Arquivo de testes local
+teste.py
+
+# Cache do Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual env
+.venv/
+venv/
+ENV/

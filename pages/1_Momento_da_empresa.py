@@ -3,7 +3,7 @@ import pandas as pd
 import plotly.express as px
 from data_loader import load_transacoes
 from utils import features_cashflow, classificar_momento
-from consulta_ia import retorna_informacao
+from consulta_ia import retorna_informacao_empresas
 
 st.set_page_config(page_title="Momento da Empresa", layout="wide")
 st.title("Análise Detalhada: Momento da Empresa")
@@ -25,7 +25,7 @@ if perfil.empty:
     st.error("Não foi possível carregar os dados para esta página.")
 else:
     id_selecionado = st.selectbox("Selecione a empresa:", sorted(perfil["id"].unique()))
-    informacoes_ia = retorna_informacao(id_selecionado)
+    informacoes_ia = retorna_informacao_empresas(id_selecionado)
     
     perfil_id = perfil[perfil["id"] == id_selecionado].iloc[0]
     st.metric("Momento Atual", perfil_id['momento'], f"Margem Média: {perfil_id['margem_med']:.1%}")

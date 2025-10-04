@@ -2,88 +2,192 @@ from openai import OpenAI
 import pandas as pd
 from dotenv import load_dotenv
 import os
+import streamlit as st
 
+# --- Carregamento da Chave de API ---
 load_dotenv()
+api_key = os.getenv('API_KEY') or st.secrets.get("OPENAI_API_KEY")
 
-api_key = os.getenv('API_KEY')
-client = OpenAI(api_key=api_key)
-df = pd.read_excel(f'Challenge FIAP - Bases.xlsx',sheet_name="Base 1 - ID")
-df_2 = pd.read_excel(f'Challenge FIAP - Bases.xlsx',sheet_name="Base 2 - Transações")
+if not api_key:
+    st.error("Chave de API da OpenAI não encontrada. Por favor, configure o ficheiro .env ou os segredos do Streamlit.")
+    client = None
+else:
+    client = OpenAI(api_key=api_key)
 
-def retorna_informacao_empresas(cnpj):
-    df_cnpj = df[df['id'] == cnpj]
-    context = df_cnpj.to_string(index=False)
-
-    pergunta = (
-        "Você deve analisar os dados da empresa apresentados a seguir. "
-        f"Pegue as informações do dataframe {context}"
-
-        "As colunas significam: "
-        "id = identificador do CNPJ da empresa, "
-        "vl_fatu = valor de faturamento, "
-        "vl_sldo = valor de saldo disponível, "
-        "dt_abrt = data de abertura da empresa, "
-        "ds_cnae = setor econômico da empresa (descrição CNAE), "
-        "dt_refe = data de referência dos dados.\n\n"
-        "Com base exclusivamente nesses dados, escreva em um único parágrafo objetivo: "
-        "1. Se a empresa aparenta estar em crescimento, estabilidade ou desaceleração considerando faturamento e saldo, pegue isso a partir da margem média calculada. "
-        "2. Se o saldo está proporcional ao faturamento ou se há risco de desequilíbrio. "
-        "3. Cite brevemente o setor de atuação (ds_cnae) e como isso pode influenciar o momento da empresa. "
-        "Não invente dados que não estão presentes na tabela. "
-        "Se não houver informações suficientes, declare isso claramente."
-    )
-
-    response = client.chat.completions.create(
-        model="gpt-4",
-        messages=[
-            {"role": "system", "content": f"Dados da empresa:\n{context}"},
-            {"role": "user", "content": pergunta}
-        ]
-    )
-
-    return response.choices[0].message.content
-
-
-def gerar_resumo_executivo(G, communities, limiar_risco, limite_conexoes, top_conexoes):
+# --- Função para a página de Análise Individual (Mantida) ---
+def retorna_informacao_empresas(perfil_empresa, media_setor):
+    if not client: return "Cliente OpenAI não inicializado. Verifique a sua chave de API."
+    
+    contexto = f"""
+    - ID da Empresa: {perfil_empresa['id']}
+    - Momento (via ML): {perfil_empresa['momento']}
+    - Setor (CNAE): {perfil_empresa['ds_cnae']}
+    - Receita Média (6m): {perfil_empresa['receita_media_6m']:,.0f} BRL
+    - Margem Média (6m): {perfil_empresa['margem_media_6m']:.1%}
+    - Tendência de Crescimento (Receita 3m): {'Positiva' if perfil_empresa['crescimento_receita_3m'] > 0 else 'Negativa ou Estável'}
+    - Média de Receita do Setor: {media_setor['receita_media_6m']:,.0f} BRL
+    - Média de Margem do Setor: {media_setor['margem_media_6m']:.1%}
     """
-    Gera um resumo executivo estratégico a partir dos dados da rede.
-    Recebe grafo, comunidades, limiar de risco e conexões críticas.
+    prompt = f"""
+    Como um analista financeiro sênior do Banco Santander, analise os seguintes dados de uma empresa e do seu setor.
+    **Dados Analisados:**
+    {contexto}
+    **Sua Tarefa:**
+    Escreva um diagnóstico conciso em **um único parágrafo**. O diagnóstico deve:
+    1.  Começar com o "Momento" da empresa e o que isso significa.
+    2.  Comparar a receita e a margem da empresa com a média do seu setor.
+    3.  Com base na tendência de crescimento, dar uma recomendação estratégica.
+    Seja direto e foque em insights acionáveis para um gestor.
     """
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "Você é um analista financeiro sênior a escrever um diagnóstico para um cliente empresarial."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=250, temperature=0.5,
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        return f"Ocorreu um erro ao comunicar com a IA: {e}"
+
+# --- Função para a página de Análise de Rede  ---
+def gerar_resumo_executivo(G, communities, limiar_risco, limite_conexoes, relacoes_risco_df):
+    """
+    Gera um resumo executivo estratégico, agora num formato de dados puro,
+    com cada insight numa nova linha, para garantir a formatação no Streamlit.
+    """
+    if not client:
+        return "Cliente OpenAI não inicializado."
+
     total_empresas = G.number_of_nodes()
-    total_conexoes = G.number_of_edges()
     num_clusters = len(communities)
+    top_risco = relacoes_risco_df.iloc[0].to_dict() if not relacoes_risco_df.empty else None
 
-    resumo_contexto = {
-        "total_empresas": total_empresas,
-        "total_conexoes": total_conexoes,
-        "num_clusters": num_clusters,
-        "limiar_risco": limiar_risco,
-        "top_conexoes": top_conexoes[:5]  # envia só as 5 mais críticas
-    }
+    # --- PROMPT REFINADO PARA UM FORMATO DE DADOS PURO ---
+    prompt = f"""
+    Como analista de risco sênior, prepare um resumo para a diretoria com base nos dados abaixo.
+    - Empresas na Análise: {total_empresas}
+    - Clusters (Mercados) Identificados: {num_clusters}
+    - Limiar de Risco Analisado: {limiar_risco:.0%}
+    - Relação de Maior Risco: {top_risco if top_risco else "Nenhuma acima do limiar."}
+
+    **Sua Tarefa:**
+    Escreva um resumo em 3 parágrafos curtos.
+    **Retorne APENAS os 3 parágrafos, um em cada nova linha. SEM títulos, SEM negrito, SEM bullet points, SEM separadores.**
+
+    1. [Parágrafo sobre a descoberta mais importante dos {num_clusters} clusters.]
+    2. [Parágrafo sobre a relação de maior risco encontrada ({top_risco}). Se não houver, afirme que o risco está controlado.]
+    3. [Parágrafo com uma única recomendação acionável.]
+    """
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "Você é um analista de risco a preparar um briefing. Responda apenas com 3 parágrafos de texto, um por linha."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=300,
+            temperature=0.4,
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        return f"Ocorreu um erro ao comunicar com a IA: {e}"
+
+# --- FUNÇÃO ATUALIZADA PARA A PÁGINA DE PREVISÃO ---
+def gerar_resumo_previsao(df_historico, df_previsao):
+    """
+    Gera uma análise de IA sobre a previsão de fluxo de caixa,
+    identificando a tendência e sugerindo produtos financeiros de forma direta.
+    """
+    if not client:
+        return "Cliente OpenAI não inicializado. Verifique a sua chave de API."
+
+    fluxo_historico_medio = df_historico['fluxo_liq'].mean()
+    fluxo_previsto_total = df_previsao['fluxo_liq'].sum()
+    tendencia = "superavitário (sobra de caixa)" if fluxo_previsto_total > 0 else "deficitário (necessidade de caixa)"
+
+    contexto = f"""
+    **Análise de Fluxo de Caixa para uma Empresa Cliente**
+    - Fluxo de Caixa Líquido Médio Histórico: {fluxo_historico_medio:,.0f} BRL
+    - Fluxo de Caixa Líquido Total Previsto para os próximos {len(df_previsao)} meses: {fluxo_previsto_total:,.0f} BRL
+    - Tendência Geral Prevista: {tendencia}
+    """
+
+    # --- PROMPT REFINADO PARA SER MAIS OBJETIVO ---
+    prompt = f"""
+    Como um analista financeiro do Banco Santander, analise o seguinte resumo de previsão de fluxo de caixa de um cliente.
+
+    **Dados da Previsão:**
+    {contexto}
+
+    **Sua Tarefa:**
+    Escreva uma recomendação curta e direta em **um único parágrafo**. A sua recomendação deve:
+    1.  Interpretar a tendência prevista (superavitária ou deficitária).
+    2.  Com base na tendência, sugerir um tipo de produto financeiro do Santander (investimento PJ para superavit, crédito PJ para deficit).
+    
+    **Seja direto e termine a sua resposta logo após a sugestão do produto. Não adicione frases de encerramento ou convites para discussão.**
+    """
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "Você é um analista financeiro a oferecer uma recomendação objetiva a um cliente PJ."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=150, # Reduzido para garantir ainda mais concisão
+            temperature=0.5,
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        return f"Ocorreu um erro ao comunicar com a IA: {e}"
+    
+# --- ANÁLISE DE REDE INDIVIDUAL ---
+def gerar_resumo_individual_rede(empresa_foco, top_clientes, top_fornecedores, risco_cascata):
+    """
+    Gera uma análise de IA sobre a cadeia de valor de uma única empresa,
+    focando em riscos de dependência e interdependência.
+    """
+    if not client:
+        return "Cliente OpenAI não inicializado. Verifique a sua chave de API."
+
+    # Prepara os dados de contexto para a IA
+    cliente_principal = top_clientes.iloc[0].to_dict() if not top_clientes.empty else "Nenhum cliente significativo."
+    fornecedor_principal = top_fornecedores.iloc[0].to_dict() if not top_fornecedores.empty else "Nenhum fornecedor significativo."
+
+    contexto = f"""
+    **Análise da Cadeia de Valor para a Empresa:** {empresa_foco}
+    - **Cliente Principal:** {cliente_principal}
+    - **Fornecedor Principal:** {fornecedor_principal}
+    - **Análise de Risco em Cascata (Cliente do Cliente):** {risco_cascata.to_dict() if risco_cascata is not None and not risco_cascata.empty else "Risco indireto baixo ou não aplicável."}
+    """
 
     prompt = f"""
-    Você é um analista de risco interno de um grande Banco.
+    Como um especialista em risco de crédito do Banco Santander, analise os seguintes dados da cadeia de valor de um cliente.
 
-    Dados resumidos da rede:
-    {resumo_contexto}
+    **Dados da Rede do Cliente:**
+    {contexto}
 
-    Tarefas:
-    1. Analise a relevância estrutural da rede.
-    2. Avalie riscos de dependência comparando com o limiar {limiar_risco:.0%}.
-    3. Cite os maiores pontos críticos (se existirem) entre clientes e fornecedores.
-    4. Elabore um **resumo executivo em tom estratégico**, direcionado para a diretoria.
+    **Sua Tarefa:**
+    Escreva um diagnóstico estratégico em **um único parágrafo conciso**. O diagnóstico deve:
+    1.  Identificar o **principal ponto de vulnerabilidade** do cliente (seja um cliente ou fornecedor com alta dependência).
+    2.  Comentar sobre o **risco em cascata**, se for relevante.
+    3.  Sugerir proativamente uma **solução ou produto financeiro** do Santander para mitigar o principal risco identificado (ex: seguro de crédito para dependência de cliente, ou adiantamento a fornecedores para fortalecer a cadeia).
 
-    Formato:
-    Retorne somente o resumo executivo em texto corrido, sem listas nem JSON.
+    Seja direto, focando na identificação do risco e na solução que o banco pode oferecer.
     """
-
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",  # mais rápido e barato
-        messages=[
-            {"role": "system", "content": "Você é um analista de risco interno do Banco Santander."},
-            {"role": "user", "content": prompt}
-        ],
-        max_tokens=500
-    )
-
-    return response.choices[0].message.content.strip()
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "Você é um especialista em risco de crédito a preparar um diagnóstico para um cliente empresarial."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=250,
+            temperature=0.6,
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        return f"Ocorreu um erro ao comunicar com a IA: {e}"
